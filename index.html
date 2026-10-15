@@ -1,0 +1,1426 @@
+<!DOCTYPE html>
+<html lang="en" class="no-js">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#050b16">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob:; form-action 'self'; base-uri 'self'; object-src 'none'">
+<title>PulmoVision AI · Chest X-Ray Analysis</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+{# ---------- Server-side state (Jinja2) ---------- #}
+{% set pred = (prediction | string) if prediction else '' %}
+{% set has_result = (pred == 'NORMAL' and is_normal) or (pred == 'PNEUMONIA' and is_pneumonia) %}
+{% set is_pn = (pred == 'PNEUMONIA') %}
+{% set score = [[(confidence | float(0)), 0] | max, 100] | min %}
+
+<style>
+:root{
+  --bg-0:#050b16; --bg-1:#08111f; --bg-2:#0c1729;
+  --surface:rgba(17,30,51,.74); --surface-solid:#101c31; --surface-2:#152840;
+  --line:rgba(140,175,220,.14); --line-strong:rgba(140,175,220,.28);
+  --text:#e7eef9; --text-2:#a3b4cc; --text-3:#71849f;
+  --cyan:#38d2e8; --blue:#4c8dff; --mint:#5eead4; --amber:#f2b04a; --red:#f0646e;
+  --accent:var(--cyan); --accent-2:var(--mint);
+  --r-sm:8px; --r-md:12px; --r-lg:16px; --r-pill:999px;
+  --sp-1:4px; --sp-2:8px; --sp-3:12px; --sp-4:16px; --sp-5:24px; --sp-6:32px; --sp-7:48px;
+  --font:'Inter',system-ui,-apple-system,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  --ease:cubic-bezier(.2,.7,.2,1);
+  --t-fast:.16s; --t-med:.32s; --t-slow:1.1s;
+  --sidebar-w:264px; --topbar-h:64px;
+}
+*,*::before,*::after{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth;-webkit-text-size-adjust:100%}
+body{
+  margin:0;font-family:var(--font);font-size:15px;line-height:1.55;color:var(--text);
+  background:
+    radial-gradient(1100px 600px at 85% -10%,rgba(76,141,255,.12),transparent 60%),
+    radial-gradient(900px 500px at 10% 0%,rgba(56,210,232,.07),transparent 60%),
+    var(--bg-0);
+  background-attachment:fixed;min-height:100vh;
+}
+h1,h2,h3,h4,p{margin:0}
+ul,ol{margin:0;padding:0;list-style:none}
+button,input{font:inherit;color:inherit}
+a{color:inherit;text-decoration:none}
+img{max-width:100%;display:block}
+:focus-visible{outline:2px solid var(--cyan);outline-offset:2px;border-radius:6px}
+.sr-only{position:absolute!important;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+.skip-link{position:fixed;left:12px;top:-60px;z-index:200;background:var(--cyan);color:#04121c;padding:8px 14px;border-radius:var(--r-sm);font-weight:600;transition:top var(--t-fast)}
+.skip-link:focus{top:12px}
+.icon{width:1.25em;height:1.25em;flex:none;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+.mono{font-family:var(--mono)}
+
+/* ---------- Shell ---------- */
+.app{min-height:100vh}
+.sidebar{
+  position:fixed;inset:0 auto 0 0;width:var(--sidebar-w);z-index:60;display:flex;flex-direction:column;
+  padding:var(--sp-5) var(--sp-4);gap:var(--sp-5);
+  background:linear-gradient(180deg,rgba(9,18,33,.97),rgba(6,12,23,.99));
+  border-right:1px solid var(--line);
+}
+.brand{display:flex;align-items:center;gap:var(--sp-3);padding:0 var(--sp-2)}
+.brand-mark{width:40px;height:40px;flex:none}
+.brand-name{font-weight:700;font-size:16px;letter-spacing:.01em}
+.brand-sub{font-size:12px;color:var(--text-3)}
+.nav-label{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--text-3);padding:0 var(--sp-3);margin-bottom:var(--sp-2)}
+.nav-link{
+  position:relative;display:flex;align-items:center;gap:var(--sp-3);padding:10px var(--sp-3);border-radius:var(--r-md);
+  color:var(--text-2);font-weight:500;transition:background var(--t-fast),color var(--t-fast);
+}
+.nav-link:hover{background:rgba(120,160,210,.08);color:var(--text)}
+.nav-link[aria-current="true"]{
+  color:#fff;background:linear-gradient(90deg,rgba(56,210,232,.16),rgba(76,141,255,.06));
+  box-shadow:inset 0 0 0 1px rgba(56,210,232,.22);
+}
+.nav-link[aria-current="true"]::before{content:"";position:absolute;left:-16px;top:8px;bottom:8px;width:3px;border-radius:0 3px 3px 0;background:var(--cyan)}
+.nav-link[aria-current="true"] .icon{color:var(--cyan)}
+.nav-list{display:grid;gap:2px}
+.side-spacer{flex:1}
+.side-status{
+  border:1px solid var(--line);border-radius:var(--r-md);padding:var(--sp-3);background:rgba(15,27,46,.7);
+  display:grid;grid-template-columns:auto 1fr;gap:2px var(--sp-3);align-items:center;
+}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--text-3);box-shadow:0 0 0 3px rgba(113,132,159,.18)}
+.dot.is-ok{background:var(--mint);box-shadow:0 0 0 3px rgba(94,234,212,.16)}
+.dot.is-warn{background:var(--amber);box-shadow:0 0 0 3px rgba(242,176,74,.16)}
+.side-status strong{font-size:13px;font-weight:600}
+.side-status span.sub{grid-column:2;font-size:12px;color:var(--text-3)}
+.side-foot{display:flex;align-items:center;justify-content:center;font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--text-3);padding:var(--sp-2);border-top:1px solid var(--line)}
+.scrim{position:fixed;inset:0;z-index:55;background:rgba(2,6,12,.66);backdrop-filter:blur(2px);opacity:0;visibility:hidden;transition:opacity var(--t-med),visibility 0s var(--t-med)}
+.main-col{margin-left:var(--sidebar-w);min-width:0}
+
+.topbar{
+  position:sticky;top:0;z-index:40;height:var(--topbar-h);display:flex;align-items:center;gap:var(--sp-4);
+  padding:0 var(--sp-6);background:rgba(6,12,23,.78);backdrop-filter:blur(14px);border-bottom:1px solid var(--line);
+}
+.menu-btn{display:none}
+.crumbs{display:flex;align-items:center;gap:var(--sp-2);font-size:14px;color:var(--text-3);min-width:0}
+.crumbs b{color:var(--text);font-weight:600;white-space:nowrap}
+.top-spacer{flex:1}
+.clock{display:flex;flex-direction:column;align-items:flex-end;line-height:1.2;font-size:12px;color:var(--text-2);font-variant-numeric:tabular-nums}
+.clock .label{font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--text-3)}
+.chip{display:inline-flex;align-items:center;gap:var(--sp-2);padding:5px 11px;border-radius:var(--r-pill);border:1px solid var(--line);background:rgba(15,27,46,.7);font-size:12px;color:var(--text-2);white-space:nowrap}
+.avatar{display:flex;align-items:center;gap:var(--sp-2);padding:4px 12px 4px 4px;border:1px solid var(--line);border-radius:var(--r-pill);font-size:13px;color:var(--text-2)}
+.avatar i{font-style:normal;width:28px;height:28px;border-radius:50%;display:grid;place-items:center;font-size:11px;font-weight:700;color:#04121c;background:linear-gradient(135deg,var(--cyan),var(--blue))}
+
+.content{padding:var(--sp-6);display:grid;gap:var(--sp-7);max-width:1400px;margin:0 auto}
+section[id]{scroll-margin-top:calc(var(--topbar-h) + 16px)}
+.section-head{display:flex;align-items:flex-end;justify-content:space-between;gap:var(--sp-4);flex-wrap:wrap;margin-bottom:var(--sp-4)}
+.eyebrow{font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--cyan);font-weight:600}
+.section-title{font-size:22px;font-weight:650;letter-spacing:-.01em}
+.section-desc{color:var(--text-2);font-size:14px;max-width:62ch;margin-top:2px}
+
+/* ---------- Buttons ---------- */
+.btn{
+  display:inline-flex;align-items:center;justify-content:center;gap:var(--sp-2);padding:10px 18px;border-radius:var(--r-md);
+  border:1px solid transparent;font-weight:600;font-size:14px;cursor:pointer;white-space:nowrap;
+  transition:transform var(--t-fast),box-shadow var(--t-fast),background var(--t-fast),border-color var(--t-fast),opacity var(--t-fast);
+}
+.btn:active{transform:translateY(1px)}
+.btn-primary{color:#04121c;background:linear-gradient(135deg,var(--cyan),#5aa2ff);box-shadow:0 8px 22px -10px rgba(56,210,232,.7)}
+.btn-primary:hover{box-shadow:0 10px 26px -8px rgba(56,210,232,.8);transform:translateY(-1px)}
+.btn-ghost{background:rgba(20,35,57,.6);border-color:var(--line-strong);color:var(--text)}
+.btn-ghost:hover{background:rgba(32,52,82,.8);border-color:rgba(140,175,220,.4)}
+.btn-sm{padding:7px 12px;font-size:13px}
+.btn[disabled],.btn[aria-disabled="true"]{opacity:.45;cursor:not-allowed;transform:none;box-shadow:none;pointer-events:none}
+.btn.is-busy{pointer-events:none}
+.spinner{width:16px;height:16px;border-radius:50%;border:2px solid rgba(4,18,28,.3);border-top-color:#04121c;animation:spin .8s linear infinite}
+.spinner.light{border-color:rgba(56,210,232,.25);border-top-color:var(--cyan);width:34px;height:34px;border-width:3px}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* ---------- Panels ---------- */
+.panel{
+  position:relative;border:1px solid var(--line);border-radius:var(--r-lg);
+  background:linear-gradient(180deg,rgba(21,37,61,.72),rgba(12,22,38,.8));backdrop-filter:blur(10px);
+  box-shadow:0 22px 44px -28px rgba(0,0,0,.8);
+}
+.panel-head{display:flex;align-items:center;justify-content:space-between;gap:var(--sp-3);padding:var(--sp-4) var(--sp-5);border-bottom:1px solid var(--line);flex-wrap:wrap}
+.panel-title{font-size:16px;font-weight:600}
+.panel-sub{font-size:12.5px;color:var(--text-3)}
+.panel-body{padding:var(--sp-5)}
+
+/* ---------- Hero ---------- */
+.hero{
+  position:relative;overflow:hidden;border:1px solid var(--line);border-radius:20px;padding:var(--sp-6) var(--sp-6);
+  background:linear-gradient(120deg,rgba(14,28,50,.95),rgba(8,17,31,.95) 60%);
+  display:grid;grid-template-columns:minmax(0,1fr) 220px;gap:var(--sp-6);align-items:center;
+}
+.hero::before{
+  content:"";position:absolute;inset:0;pointer-events:none;opacity:.5;
+  background-image:linear-gradient(rgba(120,170,230,.09) 1px,transparent 1px),linear-gradient(90deg,rgba(120,170,230,.09) 1px,transparent 1px);
+  background-size:36px 36px;-webkit-mask-image:radial-gradient(ellipse at 75% 40%,#000 0%,transparent 70%);mask-image:radial-gradient(ellipse at 75% 40%,#000 0%,transparent 70%);
+}
+.hero::after{
+  content:"";position:absolute;left:0;right:0;top:0;height:90px;pointer-events:none;
+  background:linear-gradient(180deg,transparent,rgba(56,210,232,.11) 70%,rgba(56,210,232,.42) 99%,transparent 100%);
+  animation:scan 7s linear infinite;transform:translateY(-100%);
+}
+@keyframes scan{to{transform:translateY(calc(100% * 6))}}
+.hero>*{position:relative;z-index:1}
+.hero h1{font-size:clamp(30px,4vw,44px);letter-spacing:-.025em;line-height:1.1;font-weight:700;margin:6px 0 10px}
+.hero h1 span{background:linear-gradient(90deg,var(--cyan),var(--blue));-webkit-background-clip:text;background-clip:text;color:transparent}
+.hero .lead{color:var(--text-2);max-width:56ch;font-size:16px}
+.class-pair{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--sp-3);margin:var(--sp-5) 0;max-width:620px}
+.class-card{border:1px solid var(--line);border-radius:var(--r-md);padding:var(--sp-3) var(--sp-4);background:rgba(10,20,36,.7);font-size:13px;color:var(--text-2)}
+.class-card b{display:block;font-size:12px;letter-spacing:.12em;margin-bottom:2px}
+.class-card.n b{color:var(--cyan)} .class-card.p b{color:var(--amber)}
+.hero-actions{display:flex;gap:var(--sp-3);flex-wrap:wrap;margin-bottom:var(--sp-4)}
+.notice{display:flex;gap:var(--sp-3);align-items:flex-start;font-size:12.5px;color:var(--text-2);padding:10px 14px;border-radius:var(--r-md);border:1px solid rgba(242,176,74,.28);background:rgba(242,176,74,.06);max-width:660px}
+.notice .icon{color:var(--amber);margin-top:2px}
+.hero-art{width:100%;opacity:.95}
+
+/* ---------- Metrics ---------- */
+.metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:var(--sp-4)}
+.metric{padding:var(--sp-4) var(--sp-5);transition:transform var(--t-med) var(--ease),border-color var(--t-med),box-shadow var(--t-med)}
+.metric:hover{transform:translateY(-3px);border-color:var(--line-strong);box-shadow:0 26px 46px -26px rgba(0,0,0,.9)}
+.metric-top{display:flex;align-items:center;gap:var(--sp-2);font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--text-3);margin-bottom:var(--sp-3)}
+.metric-top .icon{color:var(--cyan)}
+.metric-value{font-size:20px;font-weight:650;letter-spacing:-.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.metric-sub{font-size:12.5px;color:var(--text-3);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.metric-value.is-normal{color:var(--cyan)} .metric-value.is-pneumonia{color:var(--amber)}
+
+/* ---------- Workflow ---------- */
+.steps{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:var(--sp-3);margin-bottom:var(--sp-4)}
+.step{display:flex;align-items:center;gap:var(--sp-3);padding:10px var(--sp-4);border:1px solid var(--line);border-radius:var(--r-md);background:rgba(11,21,37,.7);color:var(--text-3);font-size:13px;font-weight:500;position:relative;overflow:hidden;transition:all var(--t-med)}
+.step-num{width:26px;height:26px;border-radius:50%;display:grid;place-items:center;font-size:12px;font-weight:700;border:1px solid var(--line-strong);flex:none}
+.step .icon{display:none;width:14px;height:14px}
+.step.is-active{color:var(--text);border-color:rgba(56,210,232,.5)}
+.step.is-active .step-num{border-color:var(--cyan);color:var(--cyan);animation:pulse 1.4s ease-in-out infinite}
+.step.is-active::after{content:"";position:absolute;left:0;bottom:0;height:2px;width:40%;background:linear-gradient(90deg,transparent,var(--cyan));animation:slide 1.4s linear infinite}
+.step.is-done{color:var(--text);border-color:rgba(94,234,212,.35)}
+.step.is-done .step-num{background:var(--mint);border-color:var(--mint);color:#04121c}
+.step.is-done .step-num span{display:none} .step.is-done .icon{display:block;stroke-width:2.6}
+@keyframes pulse{50%{box-shadow:0 0 0 5px rgba(56,210,232,.14)}}
+@keyframes slide{from{transform:translateX(-100%)}to{transform:translateX(260%)}}
+
+/* ---------- Workspace ---------- */
+.workspace{display:grid;grid-template-columns:minmax(0,1.05fr) minmax(0,1fr);gap:var(--sp-5);align-items:start}
+.stage{position:relative}
+.dropzone{
+  position:relative;display:grid;justify-items:center;gap:var(--sp-3);text-align:center;padding:var(--sp-7) var(--sp-5);
+  border:1.5px dashed var(--line-strong);border-radius:var(--r-lg);cursor:pointer;
+  background:radial-gradient(500px 220px at 50% 0%,rgba(56,210,232,.07),transparent 70%),rgba(8,16,29,.6);
+  transition:border-color var(--t-med),background var(--t-med),transform var(--t-med) var(--ease);
+}
+.dropzone:hover{border-color:rgba(56,210,232,.55)}
+.stage.is-dragover .dropzone{border-color:var(--cyan);background:radial-gradient(500px 240px at 50% 30%,rgba(56,210,232,.16),transparent 70%),rgba(8,16,29,.8);transform:scale(1.01)}
+.dz-icon{width:68px;height:68px;border-radius:18px;display:grid;place-items:center;color:var(--cyan);border:1px solid rgba(56,210,232,.3);background:linear-gradient(160deg,rgba(56,210,232,.14),rgba(76,141,255,.06))}
+.dz-icon .icon{width:30px;height:30px}
+.dz-title{font-size:17px;font-weight:600}
+.dz-text{color:var(--text-2);font-size:13.5px;max-width:38ch}
+.dz-formats{display:flex;gap:var(--sp-2);flex-wrap:wrap;justify-content:center;font-size:12px;color:var(--text-3)}
+.dz-formats span{padding:2px 9px;border:1px solid var(--line);border-radius:var(--r-pill)}
+.file-input{position:absolute;width:1px;height:1px;opacity:0;overflow:hidden;pointer-events:none}
+.no-js .file-input{position:static;width:auto;height:auto;opacity:1;pointer-events:auto;margin:var(--sp-3) 0}
+.no-js .dropzone{display:none}
+.preview{display:grid;gap:var(--sp-4)}
+.viewer{
+  position:relative;aspect-ratio:4/3;border-radius:var(--r-md);overflow:hidden;background:#02060d;border:1px solid var(--line-strong);
+  display:grid;place-items:center;
+  background-image:linear-gradient(rgba(120,170,230,.06) 1px,transparent 1px),linear-gradient(90deg,rgba(120,170,230,.06) 1px,transparent 1px);background-size:24px 24px;
+}
+.viewer img{max-height:100%;max-width:100%;object-fit:contain}
+.viewer .corner{position:absolute;width:18px;height:18px;border:2px solid rgba(56,210,232,.7)}
+.viewer .c1{top:10px;left:10px;border-right:0;border-bottom:0} .viewer .c2{top:10px;right:10px;border-left:0;border-bottom:0}
+.viewer .c3{bottom:10px;left:10px;border-right:0;border-top:0} .viewer .c4{bottom:10px;right:10px;border-left:0;border-top:0}
+.viewer .tag{position:absolute;left:14px;bottom:14px;font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;padding:3px 8px;border-radius:var(--r-pill);background:rgba(3,8,16,.78);border:1px solid var(--line-strong);color:var(--text-2)}
+.file-name{font-weight:600;word-break:break-all}
+.file-meta{display:flex;flex-wrap:wrap;gap:var(--sp-2);margin-top:6px}
+.file-meta span{font-size:12px;color:var(--text-2);padding:2px 10px;border-radius:var(--r-pill);border:1px solid var(--line);background:rgba(10,20,36,.7)}
+.row-actions{display:flex;gap:var(--sp-2);flex-wrap:wrap}
+.field-error{display:flex;gap:var(--sp-2);align-items:flex-start;margin-top:var(--sp-3);padding:10px 14px;border-radius:var(--r-md);border:1px solid rgba(240,100,110,.4);background:rgba(240,100,110,.08);color:#ffb3b8;font-size:13px}
+.submit-row{display:flex;align-items:center;gap:var(--sp-4);flex-wrap:wrap;margin-top:var(--sp-5);padding-top:var(--sp-4);border-top:1px solid var(--line)}
+.submit-row p{font-size:12.5px;color:var(--text-3);flex:1;min-width:200px}
+
+/* ---------- Result ---------- */
+.status-pill{display:inline-flex;align-items:center;gap:6px;padding:4px 11px;border-radius:var(--r-pill);font-size:11.5px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;border:1px solid var(--line-strong);color:var(--text-2)}
+.result--normal{--accent:var(--cyan);--accent-2:var(--mint)}
+.result--pneumonia{--accent:var(--amber);--accent-2:#ff9f6b}
+.status-pill.is-output{color:var(--accent);border-color:color-mix(in srgb,var(--accent) 45%,transparent);background:color-mix(in srgb,var(--accent) 9%,transparent)}
+.empty{display:grid;justify-items:center;text-align:center;gap:var(--sp-3);padding:var(--sp-7) var(--sp-5);min-height:420px;align-content:center}
+.empty-art{width:120px;height:120px;position:relative;display:grid;place-items:center}
+.empty h3{font-size:19px}
+.empty p{color:var(--text-2);max-width:40ch;font-size:14px}
+.result-body{padding:var(--sp-5);display:grid;gap:var(--sp-5);animation:rise .7s var(--ease) both}
+.result-top{display:grid;grid-template-columns:150px minmax(0,1fr);gap:var(--sp-5);align-items:center}
+.ring{position:relative;width:150px;height:150px}
+.ring svg{width:100%;height:100%;transform:rotate(-90deg)}
+.ring-bg{fill:none;stroke:rgba(140,175,220,.14);stroke-width:9}
+.ring-fg{fill:none;stroke:url(#gRing);stroke-width:9;stroke-linecap:round;stroke-dasharray:var(--pct) 100;animation:ring 1.5s var(--ease) both}
+@keyframes ring{from{stroke-dasharray:0 100}}
+.ring-label{position:absolute;inset:0;display:grid;place-content:center;text-align:center}
+.ring-label b{font-size:28px;font-weight:700;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+.ring-label span{font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--text-3)}
+.pred-label{font-size:11.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--text-3)}
+.pred-class{font-size:clamp(26px,3.2vw,34px);font-weight:700;letter-spacing:-.02em;color:var(--accent);line-height:1.15;margin:2px 0 8px}
+.bar-block{display:grid;gap:8px}
+.bar-head{display:flex;justify-content:space-between;font-size:13px;color:var(--text-2)}
+.bar-head b{color:var(--text);font-variant-numeric:tabular-nums}
+.bar{height:10px;border-radius:var(--r-pill);background:rgba(140,175,220,.12);overflow:hidden}
+.bar-fill{height:100%;width:calc(var(--pct) * 1%);border-radius:inherit;background:linear-gradient(90deg,var(--accent),var(--accent-2));animation:grow 1.4s var(--ease) both}
+@keyframes grow{from{width:0}}
+.bar-ticks{display:flex;justify-content:space-between;font-size:10.5px;color:var(--text-3)}
+.explain{font-size:14px;color:var(--text-2);padding:var(--sp-4);border-radius:var(--r-md);border:1px solid var(--line);background:rgba(8,16,29,.55);border-left:3px solid var(--accent)}
+.kv{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1px;background:var(--line);border:1px solid var(--line);border-radius:var(--r-md);overflow:hidden}
+.kv div{background:rgba(11,21,37,.95);padding:10px 14px}
+.kv dt{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--text-3)}
+.kv dd{margin:2px 0 0;font-size:13.5px;word-break:break-word}
+.kv{margin:0}
+.fine{font-size:12px;color:var(--text-3)}
+.loading-overlay{
+  position:absolute;inset:0;z-index:5;display:grid;place-content:center;justify-items:center;gap:var(--sp-3);text-align:center;
+  border-radius:inherit;background:rgba(6,12,23,.86);backdrop-filter:blur(4px);padding:var(--sp-5);
+}
+.loading-overlay p{color:var(--text-2);font-size:14px;max-width:32ch}
+.loading-overlay strong{font-size:16px}
+
+/* ---------- History ---------- */
+.hist-list{display:grid}
+.hist-row{display:grid;grid-template-columns:130px minmax(0,1.4fr) 90px minmax(0,1fr) auto;gap:var(--sp-4);align-items:center;padding:12px var(--sp-5);border-bottom:1px solid var(--line);font-size:13.5px;animation:rise .4s var(--ease) both}
+.hist-row:last-child{border-bottom:0}
+.hist-head{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--text-3);padding-top:12px;padding-bottom:12px;animation:none}
+.hist-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.badge{display:inline-flex;justify-content:center;padding:3px 10px;border-radius:var(--r-pill);font-size:11.5px;font-weight:600;letter-spacing:.06em;border:1px solid}
+.badge.n{color:var(--cyan);border-color:rgba(56,210,232,.4);background:rgba(56,210,232,.08)}
+.badge.p{color:var(--amber);border-color:rgba(242,176,74,.4);background:rgba(242,176,74,.08)}
+.hist-empty{display:grid;justify-items:center;gap:var(--sp-2);text-align:center;padding:var(--sp-7) var(--sp-5);color:var(--text-2)}
+.hist-empty .icon{width:34px;height:34px;color:var(--text-3)}
+.hist-empty b{color:var(--text)}
+.hist-note{padding:12px var(--sp-5);border-top:1px solid var(--line);font-size:12.5px;color:var(--text-3)}
+
+/* ---------- Model info ---------- */
+.accordion{display:grid;gap:var(--sp-3)}
+details.acc{border:1px solid var(--line);border-radius:var(--r-lg);background:linear-gradient(180deg,rgba(21,37,61,.6),rgba(12,22,38,.7))}
+details.acc>summary{
+  list-style:none;cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:var(--sp-3);padding:var(--sp-4) var(--sp-5);font-weight:600;
+}
+details.acc>summary::-webkit-details-marker{display:none}
+details.acc>summary .icon{transition:transform var(--t-med) var(--ease);color:var(--text-3)}
+details.acc[open]>summary .icon{transform:rotate(180deg)}
+.acc-body{padding:0 var(--sp-5) var(--sp-5);animation:rise .4s var(--ease) both}
+.spec{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1px;background:var(--line);border:1px solid var(--line);border-radius:var(--r-md);overflow:hidden;margin:0}
+.spec div{background:rgba(11,21,37,.95);padding:12px 16px}
+.spec dt{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--text-3)}
+.spec dd{margin:2px 0 0}
+.diagram svg{width:100%;height:auto}
+.diagram .v{display:none}
+.limits{display:grid;gap:var(--sp-3)}
+.limits li{display:flex;gap:var(--sp-3);color:var(--text-2);font-size:14px}
+.limits .icon{color:var(--amber);margin-top:3px;width:1.1em;height:1.1em}
+
+/* ---------- About ---------- */
+.about-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:var(--sp-4)}
+.about-card{padding:var(--sp-5)}
+.about-card h3{font-size:15px;margin-bottom:var(--sp-3)}
+.about-card li{display:flex;gap:var(--sp-3);font-size:13.5px;color:var(--text-2);margin-bottom:8px}
+.about-card li::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--cyan);margin-top:8px;flex:none}
+.about-card.no li::before{background:var(--amber)}
+
+.footer{border-top:1px solid var(--line);padding:var(--sp-5) var(--sp-6);display:flex;flex-wrap:wrap;gap:var(--sp-3) var(--sp-5);align-items:center;justify-content:space-between;color:var(--text-3);font-size:12.5px}
+.footer b{color:var(--text-2)}
+.footer p{max-width:60ch}
+
+/* ---------- Toasts / dialog ---------- */
+.toasts{position:fixed;right:20px;bottom:20px;z-index:300;display:grid;gap:10px;width:min(360px,calc(100vw - 40px))}
+.toast{display:flex;gap:var(--sp-3);align-items:flex-start;padding:12px 14px;border-radius:var(--r-md);background:#0f1d33;border:1px solid var(--line-strong);box-shadow:0 18px 40px -14px rgba(0,0,0,.8);font-size:13.5px;animation:toastIn .35s var(--ease) both}
+.toast .icon{margin-top:1px}
+.toast.ok .icon{color:var(--mint)} .toast.err{border-color:rgba(240,100,110,.5)} .toast.err .icon{color:var(--red)} .toast.info .icon{color:var(--cyan)}
+.toast.out{animation:toastOut .25s ease forwards}
+@keyframes toastIn{from{opacity:0;transform:translateY(12px)}}
+@keyframes toastOut{to{opacity:0;transform:translateY(8px)}}
+dialog{border:1px solid var(--line-strong);border-radius:var(--r-lg);background:#0d1a2e;color:var(--text);padding:0;width:min(460px,calc(100vw - 32px));box-shadow:0 30px 80px -20px #000}
+dialog::backdrop{background:rgba(2,6,12,.72);backdrop-filter:blur(3px)}
+.dlg-head{display:flex;justify-content:space-between;align-items:center;padding:var(--sp-4) var(--sp-5);border-bottom:1px solid var(--line)}
+.dlg-body{padding:var(--sp-5);display:grid;gap:var(--sp-4)}
+.icon-btn{width:34px;height:34px;display:grid;place-items:center;border-radius:var(--r-sm);border:1px solid var(--line);background:transparent;cursor:pointer;color:var(--text-2)}
+.icon-btn:hover{background:rgba(120,160,210,.1);color:var(--text)}
+
+@keyframes rise{from{opacity:0;transform:translateY(14px)}}
+.reveal{animation:rise .7s var(--ease) both}
+.reveal.d1{animation-delay:.06s}.reveal.d2{animation-delay:.12s}.reveal.d3{animation-delay:.18s}
+
+/* ---------- Responsive ---------- */
+@media (max-width:1180px){
+  .metrics{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .workspace{grid-template-columns:minmax(0,1fr)}
+  .about-grid{grid-template-columns:minmax(0,1fr)}
+}
+@media (max-width:1023px){
+  .sidebar{transform:translateX(-102%);visibility:hidden;transition:transform var(--t-med) var(--ease),visibility 0s var(--t-med);box-shadow:30px 0 60px -20px rgba(0,0,0,.8)}
+  .nav-open .sidebar{transform:none;visibility:visible;transition:transform var(--t-med) var(--ease),visibility 0s}
+  .nav-open .scrim{opacity:1;visibility:visible;transition:opacity var(--t-med),visibility 0s}
+  .main-col{margin-left:0}
+  .menu-btn{display:grid}
+  .topbar{padding:0 var(--sp-4)}
+  .content{padding:var(--sp-5) var(--sp-4);gap:var(--sp-6)}
+  .hero{grid-template-columns:minmax(0,1fr)}
+  .hero-art{display:none}
+}
+@media (max-width:760px){
+  .clock,.avatar span{display:none}
+  .avatar{padding:4px}
+  .chip.status-chip span.t{display:none}
+  .steps{grid-template-columns:minmax(0,1fr)}
+  .class-pair{grid-template-columns:minmax(0,1fr)}
+  .result-top{grid-template-columns:minmax(0,1fr);justify-items:center;text-align:center}
+  .kv,.spec{grid-template-columns:minmax(0,1fr)}
+  .hist-row{grid-template-columns:auto minmax(0,1fr) auto;row-gap:4px}
+  .hist-row .h-time{grid-column:1 / 3;color:var(--text-3);font-size:12px}
+  .hist-row .h-score{text-align:right}
+  .hist-head{display:none}
+  .diagram .h{display:none} .diagram .v{display:block;max-width:340px;margin:0 auto}
+  .toasts{right:50%;transform:translateX(50%)}
+  .metrics{grid-template-columns:minmax(0,1fr)}
+  .hero{padding:var(--sp-5)}
+}
+@media (prefers-reduced-motion:reduce){
+  html{scroll-behavior:auto}
+  *,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important;scroll-behavior:auto!important}
+  .hero::after{display:none}
+}
+</style>
+</head>
+<body>
+
+<!-- Icon sprite -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <defs>
+    <linearGradient id="gBrand" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#38d2e8"/><stop offset="1" stop-color="#4c8dff"/></linearGradient>
+    <linearGradient id="gHero" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#38d2e8"/><stop offset="1" stop-color="#4c8dff"/></linearGradient>
+    <linearGradient id="gRing" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="var(--accent)"/><stop offset="1" stop-color="var(--accent-2)"/></linearGradient>
+    <marker id="arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1 9 5 1 9" fill="none" stroke="#5a7da6" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></marker>
+  </defs>
+  <symbol id="i-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></symbol>
+  <symbol id="i-scan" viewBox="0 0 24 24"><path d="M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-2"/><path d="M7 12h10"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+  <symbol id="i-layers" viewBox="0 0 24 24"><path d="M12 3 3 8l9 5 9-5-9-5Z"/><path d="m3 13 9 5 9-5"/></symbol>
+  <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></symbol>
+  <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 16V5M7.5 9.5 12 5l4.5 4.5"/><path d="M5 15v3a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-3"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol>
+  <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 5v6h-6"/></symbol>
+  <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v11M7.5 10.5 12 15l4.5-4.5"/><path d="M5 19h14"/></symbol>
+  <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12.5 4.5 4.5L19 7.5"/></symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 4 2.5 20h19L12 4Z"/><path d="M12 10v4M12 17h.01"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/></symbol>
+  <symbol id="i-chev" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+  <symbol id="i-image" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="1.6"/><path d="m21 16-5-5-8 8"/></symbol>
+  <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></symbol>
+  <symbol id="i-cpu" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/></symbol>
+  <symbol id="i-pulse" viewBox="0 0 24 24"><path d="M3 12h4l2.5-6 4 12 2.5-6H21"/></symbol>
+  <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></symbol>
+</svg>
+
+<a class="skip-link" href="#main">Skip to main content</a>
+
+<div class="app" id="app">
+  <div class="scrim" id="scrim"></div>
+
+  <!-- ===== Sidebar ===== -->
+  <aside class="sidebar" id="sidebar" aria-label="Primary navigation">
+    <div class="brand">
+      <svg class="brand-mark" viewBox="0 0 40 40" aria-hidden="true">
+        <rect x="1" y="1" width="38" height="38" rx="11" fill="#0c1a2e" stroke="url(#gBrand)" stroke-width="1.4"/>
+        <path d="M20 8v9M20 17c-3 0-7 3-8 9-.6 3.4 1.6 5 4 4 1.8-.8 3-2.6 3-5.5V17M20 17c3 0 7 3 8 9 .6 3.4-1.6 5-4 4-1.8-.8-3-2.6-3-5.5V17" fill="none" stroke="url(#gBrand)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M7 20h26" stroke="#5eead4" stroke-width="1" stroke-dasharray="2 3" opacity=".7"/>
+      </svg>
+      <div>
+        <div class="brand-name">PulmoVision AI</div>
+        <div class="brand-sub">Chest Imaging Workspace</div>
+      </div>
+    </div>
+
+    <nav aria-label="Sections">
+      <div class="nav-label">Workspace</div>
+      <ul class="nav-list">
+        <li><a class="nav-link" href="#overview" data-section="overview" aria-current="true"><svg class="icon" aria-hidden="true"><use href="#i-grid"/></svg>Overview</a></li>
+        <li><a class="nav-link" href="#analysis" data-section="analysis"><svg class="icon" aria-hidden="true"><use href="#i-scan"/></svg>Image Analysis</a></li>
+        <li><a class="nav-link" href="#history" data-section="history"><svg class="icon" aria-hidden="true"><use href="#i-clock"/></svg>Analysis History</a></li>
+        <li><a class="nav-link" href="#model" data-section="model"><svg class="icon" aria-hidden="true"><use href="#i-layers"/></svg>Model Information</a></li>
+        <li><a class="nav-link" href="#about" data-section="about"><svg class="icon" aria-hidden="true"><use href="#i-info"/></svg>About This Prototype</a></li>
+      </ul>
+    </nav>
+
+    <div class="side-spacer"></div>
+
+    <div class="side-status" role="status">
+      <span class="dot" id="sideDot" aria-hidden="true"></span>
+      <strong id="sideStatusTitle">Interface loaded</strong>
+      <span class="sub" id="sideStatusSub">Backend not verified</span>
+    </div>
+    <div class="side-foot">Educational Prototype</div>
+  </aside>
+
+  <div class="main-col">
+    <!-- ===== Top bar ===== -->
+    <header class="topbar">
+      <button type="button" class="icon-btn menu-btn" id="menuBtn" aria-label="Open navigation menu" aria-controls="sidebar" aria-expanded="false">
+        <svg class="icon" aria-hidden="true"><use href="#i-menu"/></svg>
+      </button>
+      <div class="crumbs" aria-label="Current location">
+        <span>PulmoVision</span><span aria-hidden="true">/</span><b id="crumbTitle">Overview</b>
+      </div>
+      <div class="top-spacer"></div>
+      <div class="clock" aria-label="Local date and time">
+        <span class="label">Local time</span>
+        <time id="clock" datetime="">—</time>
+      </div>
+      <span class="chip status-chip" title="Status of this web interface only"><span class="dot" id="topDot" aria-hidden="true"></span><span class="t" id="topStatus">Interface ready</span></span>
+      <a class="btn btn-ghost btn-sm" id="resetBtn" data-new-analysis href="{{ '/#analysis' if has_result else '#analysis' }}"><svg class="icon" aria-hidden="true"><use href="#i-refresh"/></svg><span>New analysis</span></a>
+      <div class="avatar" title="ML Workspace"><i aria-hidden="true">ML</i><span>ML Workspace</span></div>
+    </header>
+
+    <main id="main" class="content">
+
+      <!-- ===== Overview ===== -->
+      <section id="overview" aria-labelledby="heroTitle">
+        <div class="hero reveal">
+          <div>
+            <span class="eyebrow">AI-assisted image classification</span>
+            <h1 id="heroTitle"><span>Chest X-Ray</span> Analysis</h1>
+            <p class="lead">Explore an AI-assisted image classification workflow powered by a convolutional neural network.</p>
+            <div class="class-pair">
+              <div class="class-card n"><b>NORMAL</b>Images the model classifies as showing no pneumonia pattern.</div>
+              <div class="class-card p"><b>PNEUMONIA</b>Images the model classifies as showing a pneumonia-associated pattern.</div>
+            </div>
+            <div class="hero-actions">
+              <a class="btn btn-primary" data-new-analysis href="{{ '/#analysis' if has_result else '#analysis' }}"><svg class="icon" aria-hidden="true"><use href="#i-upload"/></svg>New Analysis</a>
+              <a class="btn btn-ghost" id="viewModelBtn" href="#model">View Model Details</a>
+            </div>
+            <div class="notice" role="note">
+              <svg class="icon" aria-hidden="true"><use href="#i-alert"/></svg>
+              <span><b>Experimental educational prototype.</b> Not a medical diagnostic service. Outputs may be incorrect and must not be used for diagnosis or treatment decisions.</span>
+            </div>
+          </div>
+          <svg class="hero-art" viewBox="0 0 240 240" aria-hidden="true" focusable="false">
+            <rect x="8" y="8" width="224" height="224" rx="18" fill="rgba(6,14,26,.7)" stroke="rgba(140,175,220,.22)"/>
+            <g fill="none" stroke="url(#gHero)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M118 36v44M118 80 98 108M118 80l20 28" />
+              <path id="lungL" d="M104 70C80 78 52 118 50 170c-1 30 20 40 38 30 10-6 14-22 14-46V80Z"/>
+              <path d="M136 70c24 8 52 48 54 100 1 30-20 40-38 30-10-6-14-22-14-46V80Z"/>
+            </g>
+            <g fill="none" stroke="rgba(94,234,212,.5)" stroke-width="1.2" stroke-linecap="round">
+              <path d="M60 110c14 6 28 8 40 6M56 135c16 8 32 10 46 6M58 160c16 8 30 10 44 4"/>
+              <path d="M180 110c-14 6-28 8-40 6M184 135c-16 8-32 10-46 6M182 160c-16 8-30 10-44 4"/>
+              <path d="M120 40v170" stroke-dasharray="3 5"/>
+            </g>
+            <g stroke="rgba(56,210,232,.8)" stroke-width="2" fill="none"><path d="M20 38V24a4 4 0 0 1 4-4h14M202 20h14a4 4 0 0 1 4 4v14M220 202v14a4 4 0 0 1-4 4h-14M38 220H24a4 4 0 0 1-4-4v-14"/></g>
+          </svg>
+        </div>
+
+        <div class="metrics" style="margin-top:var(--sp-5)" role="list" aria-label="Session overview">
+          <article class="panel metric reveal d1" role="listitem">
+            <div class="metric-top"><svg class="icon" aria-hidden="true"><use href="#i-image"/></svg>Current Analysis</div>
+            <div class="metric-value" id="mCurrent">{{ 'Result received' if has_result else 'Awaiting image' }}</div>
+            <div class="metric-sub" id="mCurrentSub">{{ 'Image is not retained after submission' if has_result else 'Select a chest X-ray to begin' }}</div>
+          </article>
+          <article class="panel metric reveal d2" role="listitem">
+            <div class="metric-top"><svg class="icon" aria-hidden="true"><use href="#i-pulse"/></svg>Last Prediction</div>
+            <div class="metric-value {% if has_result %}{{ 'is-pneumonia' if is_pn else 'is-normal' }}{% endif %}" id="mLast">{{ pred if has_result else 'No prediction yet' }}</div>
+            <div class="metric-sub" id="mLastSub">{{ ('Model score ' ~ ('%.2f'|format(score)) ~ '%') if has_result else 'Submit an image to the model' }}</div>
+          </article>
+          <article class="panel metric reveal d3" role="listitem">
+            <div class="metric-top"><svg class="icon" aria-hidden="true"><use href="#i-layers"/></svg>Model Architecture</div>
+            <div class="metric-value">CNN</div>
+            <div class="metric-sub">TensorFlow / Keras · 128 × 128 input</div>
+          </article>
+          <article class="panel metric reveal d3" role="listitem">
+            <div class="metric-top"><svg class="icon" aria-hidden="true"><use href="#i-cpu"/></svg>Processing Status</div>
+            <div class="metric-value" id="mStatus">{{ 'Result received' if has_result else 'Ready for upload' }}</div>
+            <div class="metric-sub" id="mStatusSub">{{ 'Rendered from the server response' if has_result else 'No image selected' }}</div>
+          </article>
+        </div>
+      </section>
+
+      <!-- ===== Image Analysis ===== -->
+      <section id="analysis" aria-labelledby="analysisTitle">
+        <div class="section-head">
+          <div>
+            <span class="eyebrow">Workspace</span>
+            <h2 class="section-title" id="analysisTitle">Image Analysis</h2>
+            <p class="section-desc">Select a chest X-ray, submit it to the CNN backend, and review the model output.</p>
+          </div>
+        </div>
+
+        <ol class="steps" id="steps" aria-label="Analysis workflow">
+          <li class="step{% if has_result %} is-done{% endif %}" data-step="1"><span class="step-num"><span>1</span><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg></span>Image selected</li>
+          <li class="step{% if has_result %} is-done{% endif %}" data-step="2"><span class="step-num"><span>2</span><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg></span>Sending to model</li>
+          <li class="step{% if has_result %} is-done{% endif %}" data-step="3"><span class="step-num"><span>3</span><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg></span>Result received</li>
+        </ol>
+        <p class="sr-only" id="stepAnnounce" role="status" aria-live="polite"></p>
+
+        <div class="workspace">
+          <!-- Left: input -->
+          <form class="panel" id="uploadForm" method="POST" action="/predict" enctype="multipart/form-data" novalidate>
+            <div class="panel-head">
+              <div>
+                <h3 class="panel-title">Imaging Input</h3>
+                <p class="panel-sub">Nothing is uploaded until you submit.</p>
+              </div>
+              <span class="status-pill">Local preview</span>
+            </div>
+            <div class="panel-body">
+              <label for="file" class="sr-only">Chest X-ray image (PNG, JPG or JPEG)</label>
+              <input class="file-input" type="file" id="file" name="file" accept=".png,.jpg,.jpeg,image/png,image/jpeg" required>
+
+              <div class="stage" id="stage">
+                <div class="dropzone" id="dropzone" role="button" tabindex="0" aria-label="Drop a chest X-ray image here, or press Enter to browse">
+                  <div class="dz-icon"><svg class="icon" aria-hidden="true"><use href="#i-upload"/></svg></div>
+                  <div class="dz-title">Drop a chest X-ray here</div>
+                  <p class="dz-text">Drag and drop an image, or browse your device to choose one for analysis.</p>
+                  <button type="button" class="btn btn-ghost" id="browseBtn">Browse Image</button>
+                  <div class="dz-formats"><span>PNG</span><span>JPG</span><span>JPEG</span><span>Max 10 MB</span></div>
+                </div>
+
+                <div class="preview" id="preview" hidden>
+                  <div class="viewer">
+                    <i class="corner c1"></i><i class="corner c2"></i><i class="corner c3"></i><i class="corner c4"></i>
+                    <img id="previewImg" alt="Local preview of the selected chest X-ray">
+                    <span class="tag">Local preview · not model output</span>
+                  </div>
+                  <div>
+                    <div class="file-name" id="fileName">—</div>
+                    <div class="file-meta"><span id="fileDims">— × —</span><span id="fileSize">—</span><span id="fileType">—</span></div>
+                  </div>
+                  <div class="row-actions">
+                    <button type="button" class="btn btn-ghost btn-sm" id="changeBtn"><svg class="icon" aria-hidden="true"><use href="#i-image"/></svg>Change image</button>
+                    <button type="button" class="btn btn-ghost btn-sm" id="removeBtn"><svg class="icon" aria-hidden="true"><use href="#i-x"/></svg>Remove image</button>
+                  </div>
+                </div>
+              </div>
+
+              <div class="field-error" id="fileError" role="alert" hidden>
+                <svg class="icon" aria-hidden="true"><use href="#i-alert"/></svg><span id="fileErrorText"></span>
+              </div>
+
+              <div class="submit-row">
+                <button type="submit" class="btn btn-primary" id="analyzeBtn"><svg class="icon" aria-hidden="true"><use href="#i-scan"/></svg><span id="analyzeLabel">Analyze Image</span></button>
+                <p>The image is sent to the local backend and resized to 128 × 128 before inference. Avoid uploading images containing personal information.</p>
+              </div>
+            </div>
+          </form>
+
+          <!-- Right: result -->
+          <section class="panel{% if has_result %} result--{{ 'pneumonia' if is_pn else 'normal' }}{% endif %}" id="resultPanel" aria-labelledby="resultTitle" aria-live="polite">
+            <div class="panel-head">
+              <div>
+                <h3 class="panel-title" id="resultTitle">Classification Result</h3>
+                <p class="panel-sub">Binary output from the CNN backend</p>
+              </div>
+              {% if has_result %}<span class="status-pill is-output">Model Output</span>{% else %}<span class="status-pill">Awaiting analysis</span>{% endif %}
+            </div>
+
+            <div class="loading-overlay" id="resultLoading" hidden>
+              <div class="spinner light" aria-hidden="true"></div>
+              <strong>Sending to the model</strong>
+              <p>Waiting for the backend to return a result. This page will reload with the server response.</p>
+            </div>
+
+            {% if has_result %}
+            <div class="result-body" id="resultBody">
+              <div class="result-top">
+                <div class="ring" role="img" aria-label="Model score {{ '%.2f'|format(score) }} percent" style="--pct: {{ '%.2f'|format(score) }}">
+                  <svg viewBox="0 0 120 120" aria-hidden="true"><circle class="ring-bg" cx="60" cy="60" r="50" pathLength="100"/><circle class="ring-fg" cx="60" cy="60" r="50" pathLength="100"/></svg>
+                  <div class="ring-label"><b>{{ '%.1f'|format(score) }}%</b><span>Model score</span></div>
+                </div>
+                <div>
+                  <div class="pred-label">Predicted class</div>
+                  <div class="pred-class" id="resClass">{{ pred }}</div>
+                  <div class="bar-block" style="--pct: {{ '%.2f'|format(score) }}">
+                    <div class="bar-head"><span>Model-reported confidence</span><b>{{ '%.2f'|format(score) }}%</b></div>
+                    <div class="bar" role="img" aria-label="Score bar at {{ '%.2f'|format(score) }} percent"><div class="bar-fill"></div></div>
+                    <div class="bar-ticks" aria-hidden="true"><span>0</span><span>25</span><span>50</span><span>75</span><span>100</span></div>
+                  </div>
+                </div>
+              </div>
+
+              <p class="explain">
+                {% if is_pn %}The CNN assigned this image to the <b>PNEUMONIA</b> class.{% else %}The CNN assigned this image to the <b>NORMAL</b> class.{% endif %}
+                The score is the model's own output expressed as a percentage; it is not a clinically calibrated probability. This result is not a diagnosis and no clinical conclusion should be drawn from it.
+              </p>
+
+              <dl class="kv">
+                <div><dt>Analysis time (local display)</dt><dd id="resTime">—</dd></div>
+                <div><dt>Uploaded file</dt><dd id="resFile">Not available</dd></div>
+                <div><dt>Image dimensions</dt><dd id="resDims">Not available</dd></div>
+                <div><dt>Model input size</dt><dd>128 × 128 px</dd></div>
+              </dl>
+
+              <div class="row-actions">
+                <button type="button" class="btn btn-primary" id="downloadBtn"><svg class="icon" aria-hidden="true"><use href="#i-download"/></svg>Download Analysis Report</button>
+                <a class="btn btn-ghost" data-new-analysis href="/#analysis"><svg class="icon" aria-hidden="true"><use href="#i-refresh"/></svg>New analysis</a>
+              </div>
+              <p class="fine">The server does not return the uploaded image, so no preview is shown here. File details come from your browser at the time of submission.</p>
+            </div>
+            {% else %}
+            <div class="empty" id="resultEmpty">
+              <div class="empty-art">
+                <svg viewBox="0 0 120 120" width="120" height="120" aria-hidden="true">
+                  <circle cx="60" cy="60" r="50" fill="none" stroke="rgba(140,175,220,.18)" stroke-width="2" stroke-dasharray="3 6"/>
+                  <circle cx="60" cy="60" r="34" fill="rgba(56,210,232,.05)" stroke="rgba(56,210,232,.35)"/>
+                  <path d="M42 62h10l6-14 8 28 6-14h6" fill="none" stroke="#38d2e8" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+              </div>
+              <h3>Awaiting Analysis</h3>
+              <p>The result panel will be populated after an image is submitted to the CNN backend. The predicted class and model score appear here once the server responds.</p>
+              <button type="button" class="btn btn-primary" id="downloadBtn" disabled><svg class="icon" aria-hidden="true"><use href="#i-download"/></svg>Download Analysis Report</button>
+              <span class="fine">Available after a real prediction is returned.</span>
+            </div>
+            {% endif %}
+          </section>
+        </div>
+      </section>
+
+      <!-- ===== History ===== -->
+      <section id="history" aria-labelledby="historyTitle">
+        <div class="section-head">
+          <div>
+            <span class="eyebrow">This browser session</span>
+            <h2 class="section-title" id="historyTitle">Analysis History</h2>
+            <p class="section-desc">A temporary list of results returned during this browser session.</p>
+          </div>
+          <button type="button" class="btn btn-ghost btn-sm" id="clearHistoryBtn"><svg class="icon" aria-hidden="true"><use href="#i-trash"/></svg>Clear history</button>
+        </div>
+        <div class="panel">
+          <div class="hist-list" id="histList" role="list" aria-label="Recent analyses"></div>
+          <div class="hist-empty" id="histEmpty">
+            <svg class="icon" aria-hidden="true"><use href="#i-clock"/></svg>
+            <b>No analyses yet</b>
+            <span>Completed analyses from this session will be listed here.</span>
+          </div>
+          <p class="hist-note" id="histNote">History is temporary and stored only in this browser session (sessionStorage). It records filename, prediction, model score and local time. It is not a database, a clinical record, or shared patient history, and uploaded images are never stored.</p>
+        </div>
+      </section>
+
+      <!-- ===== Model Information ===== -->
+      <section id="model" aria-labelledby="modelTitle">
+        <div class="section-head">
+          <div>
+            <span class="eyebrow">System details</span>
+            <h2 class="section-title" id="modelTitle">Model Information</h2>
+            <p class="section-desc">What this prototype is built with, and where its limits are.</p>
+          </div>
+          <button type="button" class="btn btn-ghost btn-sm" id="toggleAllBtn" aria-pressed="false">Expand all</button>
+        </div>
+        <div class="accordion" id="accordion">
+          <details class="acc" open>
+            <summary>System overview <svg class="icon" aria-hidden="true"><use href="#i-chev"/></svg></summary>
+            <div class="acc-body">
+              <dl class="spec">
+                <div><dt>Model</dt><dd>Convolutional Neural Network (CNN)</dd></div>
+                <div><dt>Framework</dt><dd>TensorFlow / Keras</dd></div>
+                <div><dt>Task</dt><dd>Binary image classification</dd></div>
+                <div><dt>Supported labels</dt><dd>NORMAL · PNEUMONIA</dd></div>
+                <div><dt>Input</dt><dd>Image resized to 128 × 128</dd></div>
+                <div><dt>Inference</dt><dd>FastAPI backend</dd></div>
+                <div><dt>Template rendering</dt><dd>Jinja2</dd></div>
+                <div><dt>Output</dt><dd>Predicted class and backend-derived score</dd></div>
+              </dl>
+            </div>
+          </details>
+          <details class="acc">
+            <summary>Processing workflow <svg class="icon" aria-hidden="true"><use href="#i-chev"/></svg></summary>
+            <div class="acc-body diagram">
+              <svg class="h" viewBox="0 0 940 150" role="img" aria-label="Workflow: X-ray image, image preprocessing, CNN inference, classification output">
+                <g font-family="Inter,system-ui,sans-serif" text-anchor="middle">
+                  <rect x="8" y="30" width="190" height="90" rx="14" fill="#0f1d33" stroke="#2b4466"/>
+                  <text x="103" y="68" fill="#e7eef9" font-size="16" font-weight="600">X-ray Image</text><text x="103" y="92" fill="#8ea3bf" font-size="12.5">PNG · JPG · JPEG</text>
+                  <rect x="252" y="30" width="190" height="90" rx="14" fill="#0f1d33" stroke="#2b4466"/>
+                  <text x="347" y="68" fill="#e7eef9" font-size="16" font-weight="600">Image Preprocessing</text><text x="347" y="92" fill="#8ea3bf" font-size="12.5">Resize to 128 × 128</text>
+                  <rect x="496" y="30" width="190" height="90" rx="14" fill="#0f1d33" stroke="#2b4466"/>
+                  <text x="591" y="68" fill="#e7eef9" font-size="16" font-weight="600">CNN Inference</text><text x="591" y="92" fill="#8ea3bf" font-size="12.5">TensorFlow / Keras</text>
+                  <rect x="740" y="30" width="190" height="90" rx="14" fill="#0f1d33" stroke="#38d2e8"/>
+                  <text x="835" y="68" fill="#38d2e8" font-size="16" font-weight="600">Classification Output</text><text x="835" y="92" fill="#8ea3bf" font-size="12.5">Class + model score</text>
+                </g>
+                <g stroke="#5a7da6" stroke-width="1.6" fill="none" marker-end="url(#arr)"><path d="M204 75h42"/><path d="M448 75h42"/><path d="M692 75h42"/></g>
+              </svg>
+              <svg class="v" viewBox="0 0 320 440" role="img" aria-label="Workflow: X-ray image, image preprocessing, CNN inference, classification output">
+                <g font-family="Inter,system-ui,sans-serif" text-anchor="middle">
+                  <rect x="30" y="8" width="260" height="76" rx="14" fill="#0f1d33" stroke="#2b4466"/><text x="160" y="42" fill="#e7eef9" font-size="16" font-weight="600">X-ray Image</text><text x="160" y="64" fill="#8ea3bf" font-size="12.5">PNG · JPG · JPEG</text>
+                  <rect x="30" y="122" width="260" height="76" rx="14" fill="#0f1d33" stroke="#2b4466"/><text x="160" y="156" fill="#e7eef9" font-size="16" font-weight="600">Image Preprocessing</text><text x="160" y="178" fill="#8ea3bf" font-size="12.5">Resize to 128 × 128</text>
+                  <rect x="30" y="236" width="260" height="76" rx="14" fill="#0f1d33" stroke="#2b4466"/><text x="160" y="270" fill="#e7eef9" font-size="16" font-weight="600">CNN Inference</text><text x="160" y="292" fill="#8ea3bf" font-size="12.5">TensorFlow / Keras</text>
+                  <rect x="30" y="350" width="260" height="76" rx="14" fill="#0f1d33" stroke="#38d2e8"/><text x="160" y="384" fill="#38d2e8" font-size="16" font-weight="600">Classification Output</text><text x="160" y="406" fill="#8ea3bf" font-size="12.5">Class + model score</text>
+                </g>
+                <g stroke="#5a7da6" stroke-width="1.6" fill="none" marker-end="url(#arr)"><path d="M160 88v28"/><path d="M160 202v28"/><path d="M160 316v28"/></g>
+              </svg>
+            </div>
+          </details>
+          <details class="acc">
+            <summary>Limitations <svg class="icon" aria-hidden="true"><use href="#i-chev"/></svg></summary>
+            <div class="acc-body">
+              <ul class="limits">
+                <li><svg class="icon" aria-hidden="true"><use href="#i-alert"/></svg><span><b>Dataset dependence.</b> The model reflects the data it was trained on. Details of that dataset are not shown in this interface.</span></li>
+                <li><svg class="icon" aria-hidden="true"><use href="#i-alert"/></svg><span><b>Limited generalization.</b> Images from other scanners, hospitals, populations, projections or quality levels may behave very differently.</span></li>
+                <li><svg class="icon" aria-hidden="true"><use href="#i-alert"/></svg><span><b>Classification errors.</b> The model can label an image incorrectly in either direction. A high score does not guarantee a correct result.</span></li>
+                <li><svg class="icon" aria-hidden="true"><use href="#i-alert"/></svg><span><b>Binary output only.</b> It does not assess other conditions, localize findings, or explain its decision.</span></li>
+                <li><svg class="icon" aria-hidden="true"><use href="#i-alert"/></svg><span><b>Downscaled input.</b> Images are resized to 128 × 128 before inference, which discards fine detail.</span></li>
+                <li><svg class="icon" aria-hidden="true"><use href="#i-alert"/></svg><span><b>No clinical validation.</b> This prototype has not been clinically validated or approved for any medical use.</span></li>
+              </ul>
+            </div>
+          </details>
+        </div>
+      </section>
+
+      <!-- ===== About ===== -->
+      <section id="about" aria-labelledby="aboutTitle">
+        <div class="section-head">
+          <div>
+            <span class="eyebrow">Read before use</span>
+            <h2 class="section-title" id="aboutTitle">About This Prototype</h2>
+            <p class="section-desc">PulmoVision AI is a technical demonstration of an image classification pipeline built for learning and experimentation.</p>
+          </div>
+        </div>
+        <div class="about-grid">
+          <article class="panel about-card">
+            <h3>What it does</h3>
+            <ul>
+              <li>Accepts a chest X-ray image (PNG, JPG, JPEG) from your device.</li>
+              <li>Sends it to a local FastAPI backend that resizes it and runs a CNN.</li>
+              <li>Shows the predicted class (NORMAL or PNEUMONIA) and the model's score.</li>
+              <li>Lets you download a plain-text report of that single result.</li>
+            </ul>
+          </article>
+          <article class="panel about-card no">
+            <h3>What it is not</h3>
+            <ul>
+              <li>Not a medical device or diagnostic service.</li>
+              <li>Not validated for clinical use, triage or treatment decisions.</li>
+              <li>Not a replacement for review by a qualified clinician.</li>
+              <li>Not a record system: no patient data or images are stored by this interface.</li>
+            </ul>
+          </article>
+          <article class="panel about-card">
+            <h3>Reading a result</h3>
+            <ul>
+              <li>The class is the model's best guess between two labels.</li>
+              <li>The score is model-reported confidence, not a calibrated probability.</li>
+              <li>Any result may be wrong; do not act on it clinically.</li>
+              <li>If you have a health concern, consult a qualified healthcare professional.</li>
+            </ul>
+          </article>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <div><b>PulmoVision AI</b> · Educational Prototype</div>
+      <div class="mono">CNN · TensorFlow · FastAPI</div>
+      <p>For education and demonstration only. Not for medical diagnosis, treatment, or clinical decision-making.</p>
+    </footer>
+  </div>
+</div>
+
+<div class="toasts" id="toasts" role="status" aria-live="polite"></div>
+
+<dialog id="detailDialog" aria-labelledby="detailTitle">
+  <div class="dlg-head">
+    <h3 class="panel-title" id="detailTitle">Analysis details</h3>
+    <button type="button" class="icon-btn" id="detailClose" aria-label="Close details"><svg class="icon" aria-hidden="true"><use href="#i-x"/></svg></button>
+  </div>
+  <div class="dlg-body">
+    <dl class="kv" style="grid-template-columns:minmax(0,1fr)">
+      <div><dt>Predicted class</dt><dd id="dClass">—</dd></div>
+      <div><dt>Model score</dt><dd id="dScore">—</dd></div>
+      <div><dt>Filename</dt><dd id="dFile">—</dd></div>
+      <div><dt>Local timestamp</dt><dd id="dTime">—</dd></div>
+    </dl>
+    <p class="fine">Stored only in this browser session. This is not a clinical record, and the uploaded image is not stored.</p>
+  </div>
+</dialog>
+
+{# Server values are serialized with Jinja2's tojson filter (HTML-safe) and read via JSON.parse. #}
+<script type="application/json" id="server-data">{{ {'hasResult': (true if has_result else false), 'prediction': (pred if has_result else ''), 'score': ((score | round(2)) if has_result else 0)} | tojson }}</script>
+
+<script>
+(function () {
+  'use strict';
+
+  var root = document.documentElement;
+  root.classList.remove('no-js');
+  root.classList.add('js');
+
+  var $ = function (s, c) { return (c || document).querySelector(s); };
+  var $$ = function (s, c) { return Array.prototype.slice.call((c || document).querySelectorAll(s)); };
+  var SVG_ICON = function (id) {
+    var ns = 'http://www.w3.org/2000/svg';
+    var svg = document.createElementNS(ns, 'svg');
+    svg.setAttribute('class', 'icon');
+    svg.setAttribute('aria-hidden', 'true');
+    var use = document.createElementNS(ns, 'use');
+    use.setAttribute('href', '#' + id);
+    svg.appendChild(use);
+    return svg;
+  };
+
+  /* ---------- Constants ---------- */
+  var MAX_BYTES = 10 * 1024 * 1024;
+  var OK_TYPES = ['image/png', 'image/jpeg'];
+  var OK_EXT = /\.(png|jpe?g)$/i;
+  var HKEY = 'pulmovision.history.v1';
+  var PKEY = 'pulmovision.pending.v1';
+  var HMAX = 20;
+  var CLASSES = ['NORMAL', 'PNEUMONIA'];
+
+  /* ---------- Safe storage ---------- */
+  var storageOk = true;
+  var store = {
+    get: function (k) { try { return window.sessionStorage.getItem(k); } catch (e) { storageOk = false; return null; } },
+    set: function (k, v) { try { window.sessionStorage.setItem(k, v); return true; } catch (e) { storageOk = false; return false; } },
+    remove: function (k) { try { window.sessionStorage.removeItem(k); } catch (e) { storageOk = false; } }
+  };
+
+  /* ---------- Server data ---------- */
+  var server = { hasResult: false, prediction: '', score: 0 };
+  try {
+    var raw = JSON.parse($('#server-data').textContent);
+    if (raw && raw.hasResult === true && CLASSES.indexOf(raw.prediction) !== -1 &&
+        typeof raw.score === 'number' && isFinite(raw.score)) {
+      server = { hasResult: true, prediction: raw.prediction, score: raw.score };
+    }
+  } catch (e) { /* keep defaults */ }
+
+  /* ---------- Helpers ---------- */
+  function sanitizeFilename(name) {
+    var s = String(name == null ? '' : name);
+    try { s = s.normalize('NFC'); } catch (e) {}
+    s = s.replace(/[\u0000-\u001f\u007f\u200b-\u200f\u202a-\u202e\u2066-\u2069]/g, '')
+         .replace(/[\\\/:*?"<>|`$&;{}]/g, '_')
+         .replace(/^\.+/, '')
+         .replace(/\s+/g, ' ')
+         .trim();
+    if (s.length > 80) {
+      var m = s.match(/(\.[A-Za-z0-9]{1,5})$/);
+      var ext = m ? m[1] : '';
+      s = s.slice(0, 80 - ext.length) + ext;
+    }
+    return s || 'unnamed-image';
+  }
+  function fmtBytes(n) {
+    if (!isFinite(n)) return '—';
+    if (n < 1024) return n + ' B';
+    if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+    return (n / 1024 / 1024).toFixed(2) + ' MB';
+  }
+  function fmtDateTime(d) {
+    try {
+      return d.toLocaleString(undefined, { year: 'numeric', month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    } catch (e) { return d.toString(); }
+  }
+  function pad(n) { return (n < 10 ? '0' : '') + n; }
+  function setText(el, t) { if (el) el.textContent = t; }
+  function reducedMotion() {
+    return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+  }
+
+  /* ---------- Toasts ---------- */
+  var toasts = $('#toasts');
+  function toast(msg, kind) {
+    if (!toasts) return;
+    var el = document.createElement('div');
+    el.className = 'toast ' + (kind || 'info');
+    el.appendChild(SVG_ICON(kind === 'err' ? 'i-alert' : kind === 'ok' ? 'i-check' : 'i-info'));
+    var span = document.createElement('span');
+    span.textContent = msg;
+    el.appendChild(span);
+    toasts.appendChild(el);
+    while (toasts.children.length > 4) toasts.removeChild(toasts.firstChild);
+    setTimeout(function () {
+      el.classList.add('out');
+      setTimeout(function () { if (el.parentNode) el.parentNode.removeChild(el); }, 260);
+    }, kind === 'err' ? 6000 : 3800);
+  }
+
+  /* ---------- Clock ---------- */
+  var clock = $('#clock');
+  function tick() {
+    if (!clock) return;
+    var d = new Date();
+    clock.textContent = fmtDateTime(d);
+    clock.setAttribute('datetime', d.toISOString());
+  }
+  tick();
+  setInterval(tick, 1000);
+
+  /* ---------- Interface status (honest, interface-level only) ---------- */
+  (function () {
+    var served = /^https?:$/.test(location.protocol);
+    var sideDot = $('#sideDot'), topDot = $('#topDot');
+    var title = $('#sideStatusTitle'), sub = $('#sideStatusSub'), top = $('#topStatus');
+    if (server.hasResult) {
+      setText(title, 'Response received'); setText(sub, 'Last prediction came from the backend');
+      setText(top, 'Response received');
+      [sideDot, topDot].forEach(function (d) { if (d) d.classList.add('is-ok'); });
+    } else if (served) {
+      setText(title, 'Served by local app'); setText(sub, 'Model status not verified');
+      setText(top, 'Interface ready');
+      [sideDot, topDot].forEach(function (d) { if (d) d.classList.add('is-ok'); });
+    } else {
+      setText(title, 'Opened as a local file'); setText(sub, 'Not connected to the backend');
+      setText(top, 'Not connected');
+      [sideDot, topDot].forEach(function (d) { if (d) d.classList.add('is-warn'); });
+    }
+  })();
+
+  /* ---------- Navigation drawer ---------- */
+  var app = $('#app'), menuBtn = $('#menuBtn'), scrim = $('#scrim');
+  function openNav() {
+    app.classList.add('nav-open');
+    if (menuBtn) { menuBtn.setAttribute('aria-expanded', 'true'); menuBtn.setAttribute('aria-label', 'Close navigation menu'); }
+    var first = $('.nav-link[aria-current="true"]') || $('.nav-link');
+    if (first) setTimeout(function () { first.focus(); }, 50);
+  }
+  function closeNav(returnFocus) {
+    if (!app.classList.contains('nav-open')) return;
+    app.classList.remove('nav-open');
+    if (menuBtn) { menuBtn.setAttribute('aria-expanded', 'false'); menuBtn.setAttribute('aria-label', 'Open navigation menu'); if (returnFocus) menuBtn.focus(); }
+  }
+  if (menuBtn) menuBtn.addEventListener('click', function () { app.classList.contains('nav-open') ? closeNav(true) : openNav(); });
+  if (scrim) scrim.addEventListener('click', function () { closeNav(true); });
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeNav(true); });
+  window.addEventListener('resize', function () { if (window.innerWidth >= 1024) closeNav(false); });
+
+  /* ---------- Scroll spy ---------- */
+  var SECTION_TITLES = { overview: 'Overview', analysis: 'Image Analysis', history: 'Analysis History', model: 'Model Information', about: 'About This Prototype' };
+  var links = $$('.nav-link');
+  function setActive(id) {
+    links.forEach(function (a) {
+      if (a.getAttribute('data-section') === id) a.setAttribute('aria-current', 'true'); else a.removeAttribute('aria-current');
+    });
+    setText($('#crumbTitle'), SECTION_TITLES[id] || 'Overview');
+  }
+  links.forEach(function (a) {
+    a.addEventListener('click', function () { closeNav(false); setActive(a.getAttribute('data-section')); });
+  });
+  if ('IntersectionObserver' in window) {
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (en) { if (en.isIntersecting) setActive(en.target.id); });
+    }, { rootMargin: '-35% 0px -55% 0px', threshold: 0 });
+    Object.keys(SECTION_TITLES).forEach(function (id) { var s = document.getElementById(id); if (s) io.observe(s); });
+  }
+  var viewModel = $('#viewModelBtn');
+  if (viewModel) viewModel.addEventListener('click', function () {
+    var first = $('#accordion details');
+    if (first) first.open = true;
+  });
+
+  /* ---------- Model accordion ---------- */
+  var toggleAll = $('#toggleAllBtn');
+  var details = $$('#accordion details');
+  function syncToggle() {
+    var allOpen = details.every(function (d) { return d.open; });
+    if (toggleAll) { toggleAll.textContent = allOpen ? 'Collapse all' : 'Expand all'; toggleAll.setAttribute('aria-pressed', allOpen ? 'true' : 'false'); }
+  }
+  details.forEach(function (d) { d.addEventListener('toggle', syncToggle); });
+  if (toggleAll) toggleAll.addEventListener('click', function () {
+    var allOpen = details.every(function (d) { return d.open; });
+    details.forEach(function (d) { d.open = !allOpen; });
+    syncToggle();
+  });
+  syncToggle();
+
+  /* ---------- Workflow + metrics ---------- */
+  var state = { file: null, name: '', url: null, w: null, h: null, submitting: false };
+
+  function setSteps(mode) {
+    var map = { idle: [0, 0, 0], selected: [1, 0, 0], sending: [1, 2, 0], done: [1, 1, 1] }; // 1=done 2=active
+    var v = map[mode] || map.idle;
+    $$('#steps .step').forEach(function (el, i) {
+      el.classList.toggle('is-done', v[i] === 1);
+      el.classList.toggle('is-active', v[i] === 2);
+    });
+    var msg = { idle: '', selected: 'Image selected.', sending: 'Sending image to the model.', done: 'Result received.' }[mode];
+    setText($('#stepAnnounce'), msg || '');
+  }
+  function refresh() {
+    var mode = 'idle';
+    if (server.hasResult) mode = 'done';
+    if (state.file) mode = 'selected';
+    if (state.submitting) mode = 'sending';
+    setSteps(mode);
+
+    var cur = $('#mCurrent'), curSub = $('#mCurrentSub'), st = $('#mStatus'), stSub = $('#mStatusSub');
+    if (state.file) {
+      setText(cur, state.name);
+      setText(curSub, (state.w ? state.w + ' × ' + state.h + ' px · ' : '') + fmtBytes(state.file.size));
+    } else if (server.hasResult) {
+      setText(cur, 'Result received'); setText(curSub, 'Image is not retained after submission');
+    } else {
+      setText(cur, 'Awaiting image'); setText(curSub, 'Select a chest X-ray to begin');
+    }
+    if (state.submitting) { setText(st, 'Sending to model'); setText(stSub, 'Waiting for backend response'); }
+    else if (state.file) { setText(st, 'Ready to submit'); setText(stSub, 'Image selected locally'); }
+    else if (server.hasResult) { setText(st, 'Result received'); setText(stSub, 'Rendered from the server response'); }
+    else { setText(st, 'Ready for upload'); setText(stSub, 'No image selected'); }
+  }
+
+  /* ---------- Upload ---------- */
+  var form = $('#uploadForm'), input = $('#file'), stage = $('#stage'), dz = $('#dropzone');
+  var preview = $('#preview'), pImg = $('#previewImg');
+  var analyzeBtn = $('#analyzeBtn'), analyzeLabel = $('#analyzeLabel');
+  var errBox = $('#fileError');
+
+  function showError(msg) {
+    setText($('#fileErrorText'), msg);
+    if (errBox) errBox.hidden = false;
+    toast(msg, 'err');
+  }
+  function hideError() { if (errBox) errBox.hidden = true; }
+
+  function validate(file) {
+    if (!file) return 'Select a chest X-ray image first.';
+    if (!OK_EXT.test(file.name) || (file.type && OK_TYPES.indexOf(file.type) === -1)) {
+      return 'Unsupported file type. Please choose a PNG, JPG or JPEG image.';
+    }
+    if (file.size === 0) return 'The selected file is empty.';
+    if (file.size > MAX_BYTES) return 'The image is ' + fmtBytes(file.size) + '. The limit is 10 MB.';
+    return null;
+  }
+
+  function updateSubmit() {
+    if (!analyzeBtn) return;
+    var ready = !!state.file && !state.submitting;
+    analyzeBtn.disabled = !ready && !state.submitting;
+    if (state.submitting) analyzeBtn.setAttribute('aria-disabled', 'true'); else analyzeBtn.removeAttribute('aria-disabled');
+  }
+
+  function releaseUrl() {
+    if (state.url) { try { URL.revokeObjectURL(state.url); } catch (e) {} state.url = null; }
+  }
+  function clearFile(silent) {
+    releaseUrl();
+    state.file = null; state.name = ''; state.w = null; state.h = null;
+    if (input) { try { input.value = ''; } catch (e) {} }
+    if (pImg) pImg.removeAttribute('src');
+    if (preview) preview.hidden = true;
+    if (dz) dz.hidden = false;
+    hideError();
+    updateSubmit(); refresh();
+    if (!silent) toast('Image removed.', 'info');
+  }
+
+  function acceptFile(file, fromDrop) {
+    hideError();
+    var err = validate(file);
+    if (err) { showError(err); if (!fromDrop && input) { try { input.value = ''; } catch (e) {} } return; }
+
+    if (fromDrop) {
+      try {
+        var dt = new DataTransfer();
+        dt.items.add(file);
+        input.files = dt.files;
+      } catch (e) {
+        showError('Your browser could not attach the dropped file. Please use Browse Image instead.');
+        return;
+      }
+    }
+
+    releaseUrl();
+    state.file = file;
+    state.name = sanitizeFilename(file.name);
+    state.w = null; state.h = null;
+    try { state.url = URL.createObjectURL(file); } catch (e) { state.url = null; }
+
+    setText($('#fileName'), state.name);
+    setText($('#fileSize'), fmtBytes(file.size));
+    setText($('#fileType'), file.type ? file.type.replace('image/', '').toUpperCase() : 'IMAGE');
+    setText($('#fileDims'), 'Reading…');
+
+    pImg.onload = function () {
+      state.w = pImg.naturalWidth; state.h = pImg.naturalHeight;
+      setText($('#fileDims'), state.w + ' × ' + state.h + ' px');
+      refresh();
+    };
+    pImg.onerror = function () {
+      clearFile(true);
+      showError('That file could not be read as an image. Please choose a different file.');
+    };
+    if (state.url) pImg.src = state.url;
+    if (preview) preview.hidden = false;
+    if (dz) dz.hidden = true;
+    updateSubmit(); refresh();
+  }
+
+  if (input) {
+    input.addEventListener('change', function () {
+      var f = input.files && input.files[0];
+      if (f) acceptFile(f, false); else if (state.file) clearFile(true);
+    });
+  }
+  function openPicker() { if (input) input.click(); }
+  var browseBtn = $('#browseBtn'), changeBtn = $('#changeBtn'), removeBtn = $('#removeBtn');
+  if (browseBtn) browseBtn.addEventListener('click', function (e) { e.stopPropagation(); openPicker(); });
+  if (changeBtn) changeBtn.addEventListener('click', openPicker);
+  if (removeBtn) removeBtn.addEventListener('click', function () { clearFile(false); if (dz) dz.focus(); });
+  if (dz) {
+    dz.addEventListener('click', openPicker);
+    dz.addEventListener('keydown', function (e) {
+      if (e.target !== dz) return;
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openPicker(); }
+    });
+  }
+
+  /* Drag and drop */
+  function hasFiles(e) {
+    var t = e.dataTransfer && e.dataTransfer.types;
+    if (!t) return false;
+    for (var i = 0; i < t.length; i++) if (t[i] === 'Files') return true;
+    return false;
+  }
+  var dragDepth = 0;
+  if (stage) {
+    stage.addEventListener('dragenter', function (e) { if (!hasFiles(e)) return; e.preventDefault(); dragDepth++; stage.classList.add('is-dragover'); });
+    stage.addEventListener('dragover', function (e) { if (!hasFiles(e)) return; e.preventDefault(); if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy'; });
+    stage.addEventListener('dragleave', function (e) { if (!hasFiles(e)) return; dragDepth = Math.max(0, dragDepth - 1); if (dragDepth === 0) stage.classList.remove('is-dragover'); });
+    stage.addEventListener('drop', function (e) {
+      if (!hasFiles(e)) return;
+      e.preventDefault(); dragDepth = 0; stage.classList.remove('is-dragover');
+      var files = e.dataTransfer.files;
+      if (!files || !files.length) return;
+      if (files.length > 1) toast('Only the first image was used.', 'info');
+      acceptFile(files[0], true);
+    });
+  }
+  window.addEventListener('dragover', function (e) { if (hasFiles(e)) e.preventDefault(); });
+  window.addEventListener('drop', function (e) { if (hasFiles(e)) e.preventDefault(); });
+
+  /* Submission (real form POST to /predict; no fetch, no simulated result) */
+  var resultLoading = $('#resultLoading');
+  function setLoading(on) {
+    state.submitting = on;
+    if (resultLoading) resultLoading.hidden = !on;
+    if (analyzeBtn) analyzeBtn.classList.toggle('is-busy', on);
+    if (analyzeLabel) analyzeLabel.textContent = on ? 'Sending to model…' : 'Analyze Image';
+    if (analyzeBtn) {
+      var ic = $('.icon, .spinner', analyzeBtn);
+      if (on && ic && ic.tagName.toLowerCase() === 'svg') {
+        var sp = document.createElement('span'); sp.className = 'spinner'; sp.setAttribute('aria-hidden', 'true');
+        analyzeBtn.replaceChild(sp, ic);
+      } else if (!on) {
+        var s2 = $('.spinner', analyzeBtn);
+        if (s2) analyzeBtn.replaceChild(SVG_ICON('i-scan'), s2);
+      }
+    }
+    if (form) form.setAttribute('aria-busy', on ? 'true' : 'false');
+    updateSubmit(); refresh();
+  }
+  if (form) {
+    form.addEventListener('submit', function (e) {
+      if (state.submitting) { e.preventDefault(); return; }
+      var f = input && input.files && input.files[0];
+      var err = validate(f);
+      if (err) { e.preventDefault(); showError(err); return; }
+      store.set(PKEY, JSON.stringify({
+        name: state.name || sanitizeFilename(f.name),
+        size: f.size, w: state.w, h: state.h, t: Date.now()
+      }));
+      setLoading(true);
+    });
+  }
+  window.addEventListener('pageshow', function (e) {
+    if (e.persisted && state.submitting) { setLoading(false); store.remove(PKEY); }
+  });
+
+  /* New analysis / reset */
+  $$('[data-new-analysis]').forEach(function (a) {
+    a.addEventListener('click', function (e) {
+      if (server.hasResult) return; // real navigation to "/" clears the server-rendered result
+      e.preventDefault();
+      var had = !!state.file;
+      if (had) clearFile(true);
+      var target = document.getElementById('analysis');
+      if (target) target.scrollIntoView({ behavior: reducedMotion() ? 'auto' : 'smooth', block: 'start' });
+      if (history.replaceState) { try { history.replaceState(null, '', '#analysis'); } catch (er) {} }
+      setTimeout(function () { if (dz && !dz.hidden) dz.focus({ preventScroll: true }); }, 450);
+      toast(had ? 'Workspace reset. Ready for a new image.' : 'Ready for a new image.', 'info');
+      closeNav(false);
+    });
+  });
+
+  /* ---------- History ---------- */
+  var memHistory = [];
+  function validEntry(h) {
+    return h && typeof h.filename === 'string' && CLASSES.indexOf(h.prediction) !== -1 &&
+           typeof h.score === 'number' && isFinite(h.score) && typeof h.timestamp === 'string' && !isNaN(Date.parse(h.timestamp));
+  }
+  function loadHistory() {
+    var r = store.get(HKEY);
+    if (r === null) return storageOk ? [] : memHistory.slice();
+    try {
+      var a = JSON.parse(r);
+      return Array.isArray(a) ? a.filter(validEntry).slice(0, HMAX) : [];
+    } catch (e) { return []; }
+  }
+  function saveHistory(a) {
+    memHistory = a.slice();
+    store.set(HKEY, JSON.stringify(a));
+  }
+  var histList = $('#histList'), histEmpty = $('#histEmpty');
+  function renderHistory() {
+    var items = loadHistory();
+    while (histList.firstChild) histList.removeChild(histList.firstChild);
+    histEmpty.hidden = items.length > 0;
+    if ($('#clearHistoryBtn')) $('#clearHistoryBtn').disabled = items.length === 0;
+    if (!items.length) return;
+
+    var head = document.createElement('div');
+    head.className = 'hist-row hist-head';
+    head.setAttribute('aria-hidden', 'true');
+    ['Class', 'Filename', 'Score', 'Time', ''].forEach(function (t) { var s = document.createElement('span'); s.textContent = t; head.appendChild(s); });
+    histList.appendChild(head);
+
+    items.forEach(function (h) {
+      var row = document.createElement('div');
+      row.className = 'hist-row'; row.setAttribute('role', 'listitem');
+      var b = document.createElement('span'); b.className = 'badge ' + (h.prediction === 'NORMAL' ? 'n' : 'p'); b.textContent = h.prediction;
+      var n = document.createElement('span'); n.className = 'hist-name'; n.textContent = h.filename; n.title = h.filename;
+      var s = document.createElement('span'); s.className = 'h-score mono'; s.textContent = h.score.toFixed(2) + '%';
+      var t = document.createElement('span'); t.className = 'h-time'; t.textContent = fmtDateTime(new Date(h.timestamp));
+      var v = document.createElement('button'); v.type = 'button'; v.className = 'btn btn-ghost btn-sm'; v.textContent = 'View details';
+      v.setAttribute('aria-label', 'View details for ' + h.filename);
+      v.addEventListener('click', function () { openDetail(h); });
+      [b, n, s, t, v].forEach(function (el) { row.appendChild(el); });
+      histList.appendChild(row);
+    });
+  }
+  function addHistory(entry) {
+    var a = loadHistory();
+    a.unshift(entry);
+    saveHistory(a.slice(0, HMAX));
+    renderHistory();
+  }
+  var clearBtn = $('#clearHistoryBtn');
+  if (clearBtn) clearBtn.addEventListener('click', function () {
+    saveHistory([]); store.remove(HKEY); memHistory = [];
+    renderHistory(); toast('History cleared.', 'ok');
+  });
+
+  var dlg = $('#detailDialog');
+  function openDetail(h) {
+    setText($('#dClass'), h.prediction);
+    setText($('#dScore'), h.score.toFixed(2) + '% (model-reported)');
+    setText($('#dFile'), h.filename);
+    setText($('#dTime'), fmtDateTime(new Date(h.timestamp)));
+    if (dlg && typeof dlg.showModal === 'function') { dlg.showModal(); }
+    else { toast(h.prediction + ' · ' + h.score.toFixed(2) + '% · ' + h.filename, 'info'); }
+  }
+  if (dlg) {
+    var dc = $('#detailClose');
+    if (dc) dc.addEventListener('click', function () { dlg.close(); });
+    dlg.addEventListener('click', function (e) { if (e.target === dlg) dlg.close(); });
+  }
+  if (!storageOk) {
+    setText($('#histNote'), 'Browser storage is unavailable, so history only lasts until this page is reloaded. It is not a database or a clinical record, and uploaded images are never stored.');
+  }
+
+  /* ---------- Report ---------- */
+  var analysisTime = new Date();
+  var fileInfo = null; // from pending submission, if any
+
+  function wrap(text, width) {
+    var words = String(text).split(/\s+/), lines = [], cur = '';
+    words.forEach(function (w) {
+      if ((cur + ' ' + w).trim().length > width) { lines.push(cur); cur = w; } else { cur = (cur + ' ' + w).trim(); }
+    });
+    if (cur) lines.push(cur);
+    return lines;
+  }
+  function row(label, value) {
+    var l = label; while (l.length < 24) l += ' ';
+    return l + ': ' + value;
+  }
+  function buildReport() {
+    var bar = '='.repeat(72), thin = '-'.repeat(72), out = [];
+    var fname = fileInfo && fileInfo.name ? sanitizeFilename(fileInfo.name) : 'Not available';
+    var dims = fileInfo && fileInfo.w && fileInfo.h ? fileInfo.w + ' x ' + fileInfo.h + ' px (as read by the browser before upload)' : 'Not available';
+    out.push(bar, ' PULMOVISION AI', ' Educational AI Classification Report', bar, '');
+    out.push('ANALYSIS SUMMARY', thin);
+    out.push(row('Application', 'PulmoVision AI'));
+    out.push(row('Report type', 'Educational AI Classification Report'));
+    out.push(row('Analysis timestamp', fmtDateTime(analysisTime) + ' (local display time)'));
+    out.push(row('Timestamp (UTC, ISO)', analysisTime.toISOString()));
+    out.push(row('Uploaded filename', fname));
+    out.push(row('Image dimensions', dims));
+    out.push(row('Predicted class', server.prediction));
+    out.push(row('Model score', server.score.toFixed(2) + '% (model-reported confidence)'));
+    out.push('');
+    out.push('MODEL AND PROCESSING', thin);
+    out.push(row('Model type', 'Convolutional Neural Network (CNN)'));
+    out.push(row('Framework', 'TensorFlow / Keras'));
+    out.push(row('Task', 'Binary image classification (NORMAL / PNEUMONIA)'));
+    out.push(row('Input preprocessing', 'Image resized to 128 x 128 pixels'));
+    out.push('');
+    out.push('ANALYSIS WORKFLOW', thin);
+    wrap('1. A chest X-ray image was selected in the browser and submitted to the local FastAPI backend.', 70).forEach(function (l, i) { out.push(i ? '   ' + l : l); });
+    wrap('2. The backend resized the image to 128 x 128 pixels and ran inference with the saved TensorFlow CNN.', 70).forEach(function (l, i) { out.push(i ? '   ' + l : l); });
+    wrap('3. The backend returned the predicted class and a score, which this interface rendered and used to generate this report.', 70).forEach(function (l, i) { out.push(i ? '   ' + l : l); });
+    out.push('');
+    out.push('NOTE ON THE SCORE', thin);
+    wrap('The score is the output of the model expressed as a percentage. It is not a clinically calibrated probability and does not indicate the likelihood that a condition is present or absent.', 72).forEach(function (l) { out.push(l); });
+    out.push('');
+    out.push('DISCLAIMER', thin);
+    wrap('This report was produced by an experimental educational prototype. The output may be incorrect and must not be used for medical diagnosis, treatment, or any clinical decision. The model has not been clinically validated or approved for medical use. If you have a health concern, consult a qualified healthcare professional.', 72).forEach(function (l) { out.push(l); });
+    out.push('', bar, ' End of report', bar, '');
+    return out.join('\r\n');
+  }
+  function downloadReport() {
+    if (!server.hasResult) return;
+    try {
+      var blob = new Blob([buildReport()], { type: 'text/plain;charset=utf-8' });
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement('a');
+      a.href = url;
+      a.download = 'pulmovision-analysis-report-' + analysisTime.getFullYear() + '-' + pad(analysisTime.getMonth() + 1) + '-' + pad(analysisTime.getDate()) + '.txt';
+      a.rel = 'noopener';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(function () { URL.revokeObjectURL(url); }, 4000);
+      toast('Analysis report downloaded.', 'ok');
+    } catch (e) {
+      toast('The report could not be generated in this browser.', 'err');
+    }
+  }
+  var dlBtn = $('#downloadBtn');
+  if (dlBtn) {
+    dlBtn.disabled = !server.hasResult;
+    dlBtn.addEventListener('click', downloadReport);
+  }
+
+  /* ---------- Initial state ---------- */
+  if (analyzeBtn) analyzeBtn.disabled = true;
+  var pending = null;
+  var pr = store.get(PKEY);
+  if (pr) {
+    try {
+      var p = JSON.parse(pr);
+      if (p && typeof p.name === 'string') pending = { name: sanitizeFilename(p.name), w: +p.w || null, h: +p.h || null, size: +p.size || null };
+    } catch (e) { pending = null; }
+  }
+  store.remove(PKEY); // always consume: prevents stale or duplicate entries
+
+  if (server.hasResult) {
+    analysisTime = new Date();
+    setText($('#resTime'), fmtDateTime(analysisTime));
+    if (pending) {
+      fileInfo = pending;
+      setText($('#resFile'), pending.name);
+      setText($('#resDims'), pending.w ? pending.w + ' × ' + pending.h + ' px' : 'Not available');
+      addHistory({ filename: pending.name, prediction: server.prediction, score: Math.round(server.score * 100) / 100, timestamp: analysisTime.toISOString() });
+      toast('Result received from the model backend.', 'ok');
+    }
+    var an = document.getElementById('analysis');
+    if (an) requestAnimationFrame(function () { an.scrollIntoView({ behavior: 'auto', block: 'start' }); setActive('analysis'); });
+  }
+
+  renderHistory();
+  refresh();
+})();
+</script>
+</body>
+</html>
